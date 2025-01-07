@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Camera Capture</title>
+    <title>Camera Capture with ID Card Detection</title>
     <style>
       body {
         font-family: Arial, sans-serif;
@@ -19,6 +19,12 @@
         max-width: 400px;
         border: 1px solid #ccc;
         margin-bottom: 10px;
+        position: absolute;
+      }
+      canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
       }
       button {
         margin-top: 10px;
@@ -33,10 +39,9 @@
     </style>
   </head>
   <body>
-    <h2>Capture a Photo</h2>
+    <h2>Scan ID Card</h2>
     <video id="video" autoplay playsinline></video>
-    <button id="captureButton">Capture Photo</button>
-    <canvas id="canvas" style="display: none"></canvas>
+    <canvas id="canvas" width="640" height="480"></canvas>
     <div id="photoSection" style="display: none">
       <h3>Photo Taken!</h3>
       <img id="photo" alt="Captured Photo" />
@@ -45,58 +50,142 @@
 
     <script>
       let video = document.getElementById("video");
-      let captureButton = document.getElementById("captureButton");
       let canvas = document.getElementById("canvas");
+      let context = canvas.getContext("2d");
       let photo = document.getElementById("photo");
       let saveButton = document.getElementById("saveButton");
       let photoSection = document.getElementById("photoSection");
+      let isCardInPlace = false; // Tracks whether the card is in place (green border)
 
-      // Function to start the camera with the rear camera if available
+      // Dimensions of the border (ID card expected size)
+      const borderWidth = 320;
+      const borderHeight = 200;
+      const borderMargin = 50; // Margin for the border
+
+      // Function to start the camera with the rear camera
       async function startCamera() {
         try {
-          // Get available media devices
-          const devices = await navigator.mediaDevices.enumerateDevices();
-
-          // Find the rear camera (back camera)
-          const rearCamera = devices.find(
-            (device) =>
-              device.kind === "videoinput" &&
-              device.label.toLowerCase().includes("back")
-          );
-
-          // If a rear camera is found, get its deviceId
-          const constraints = {
-            video: {
-              deviceId: rearCamera ? { exact: rearCamera.deviceId } : undefined,
-            },
-          };
-
-          // Get the media stream using the specified constraints (rear camera)
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" }, // rear camera
+          });
           video.srcObject = stream;
+          video.width = canvas.width;
+          video.height = canvas.height;
+          detectIDCard();
         } catch (err) {
           console.error("Error accessing camera: ", err);
           alert("Error accessing camera: " + err);
         }
       }
 
-      // Capture the photo when the button is clicked
-      captureButton.addEventListener("click", () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const context = canvas.getContext("2d");
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Function to detect ID card inside the border
+      function detectIDCard() {
+        setInterval(() => {
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Convert the canvas to a data URL and display it
-        let photoUrl = canvas.toDataURL("image/png");
+          // Draw the border where we expect the ID card to be
+          context.lineWidth = 5;
+          context.strokeStyle = isCardInPlace ? "green" : "red"; // Green if card in place, red if not
+          context.strokeRect(
+            canvas.width / 2 - borderWidth / 2,
+            canvas.height / 2 - borderHeight / 2,
+            borderWidth,
+            borderHeight
+          );
+
+          // Simulate card detection: check if the ID card is inside the border
+          // For demo purposes, let's assume the card is in place if we have a card's approximate center inside the region
+          let cardInBounds = detectCardInsideBorder();
+          if (cardInBounds && !isCardInPlace) {
+            isCardInPlace = true;
+            console.log("Card in place! Capturing photo...");
+            capturePhoto();
+          } else if (!cardInBounds && isCardInPlace) {
+            isCardInPlace = false;
+          }
+        }, 100); // Update detection every 100ms
+      }
+
+      // Function to simulate detecting the card inside the border (can be replaced with image processing)
+      function detectCardInsideBorder() {
+        // For this example, we simulate detection based on the border area.
+        // In a real scenario, you could use computer vision to detect card edges, such as OpenCV.js.
+
+        // Placeholder condition: let's say if the video feed contains significant contrast at the center, we consider it "in place".
+        let imageData = context.getImageData(
+          canvas.width / 2 - borderWidth / 2,
+          canvas.height / 2 - borderHeight / 2,
+          borderWidth,
+          borderHeight
+        );
+        let data = imageData.data;
+        let nonWhitePixelCount = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+          // Check the color of the pixel (skip white pixels)
+          if (data[i] < 200 && data[i + 1] < 200 && data[i + 2] < 200) {
+            nonWhitePixelCount++;
+          }
+        }
+
+        // If there's enough non-white pixels, consider the card to be in the border
+        return nonWhitePixelCount > 500; // Threshold to consider it "in place"
+      }
+
+      // Function to capture the photo automatically when the card is in place
+      function capturePhoto() {
+        const photoCanvas = document.createElement("canvas");
+        const photoContext = photoCanvas.getContext("2d");
+        photoCanvas.width = canvas.width;
+        photoCanvas.height = canvas.height;
+
+        // Draw the current frame to the photoCanvas
+        photoContext.drawImage(
+          video,
+          0,
+          0,
+          photoCanvas.width,
+          photoCanvas.height
+        );
+
+        // Convert the captured image to a data URL
+        let photoUrl = photoCanvas.toDataURL("image/png");
         photo.src = photoUrl;
         photoSection.style.display = "block";
 
-        // Enable the save button with the captured image URL
-        saveButton.href = photoUrl;
-      });
+        // Send the captured image to the backend
+        uploadToBackend(photoUrl);
+      }
 
-      // Start the camera as soon as the page loads
+      // Function to upload the captured photo to the backend API
+      async function uploadToBackend(photoUrl) {
+        const formData = new FormData();
+        formData.append("file", dataURLToFile(photoUrl, "captured-photo.png"));
+
+        try {
+          let response = await fetch("https://your-api-endpoint.com/upload", {
+            method: "POST",
+            body: formData,
+          });
+          let data = await response.json();
+          console.log("Photo uploaded successfully:", data);
+        } catch (err) {
+          console.error("Error uploading photo:", err);
+        }
+      }
+
+      // Convert Data URL to File (for API upload)
+      function dataURLToFile(dataURL, filename) {
+        let arr = dataURL.split(","),
+          mime = arr[0].match(/:(.*?);/)[1],
+          bstr = atob(arr[1]),
+          n = bstr.length,
+          u8arr = new Uint8Array(n);
+        while (n--) u8arr[n] = bstr.charCodeAt(n);
+        return new File([u8arr], filename, { type: mime });
+      }
+
+      // Start the camera when the page loads
       window.onload = startCamera;
     </script>
   </body>
