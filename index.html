@@ -51,14 +51,31 @@
       let saveButton = document.getElementById("saveButton");
       let photoSection = document.getElementById("photoSection");
 
-      // Initialize the camera
+      // Function to start the camera with the rear camera if available
       async function startCamera() {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-          });
+          // Get available media devices
+          const devices = await navigator.mediaDevices.enumerateDevices();
+
+          // Find the rear camera (back camera)
+          const rearCamera = devices.find(
+            (device) =>
+              device.kind === "videoinput" &&
+              device.label.toLowerCase().includes("back")
+          );
+
+          // If a rear camera is found, get its deviceId
+          const constraints = {
+            video: {
+              deviceId: rearCamera ? { exact: rearCamera.deviceId } : undefined,
+            },
+          };
+
+          // Get the media stream using the specified constraints (rear camera)
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
           video.srcObject = stream;
         } catch (err) {
+          console.error("Error accessing camera: ", err);
           alert("Error accessing camera: " + err);
         }
       }
